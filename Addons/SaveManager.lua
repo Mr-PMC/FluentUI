@@ -1,234 +1,317 @@
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
-local HttpService = game:GetService("HttpService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualUser = game:GetService("VirtualUser")
+local httpService = game:GetService("HttpService")
 
-local LocalPlayer = Players.LocalPlayer
+local SaveManager = {} do
+	SaveManager.Folder = "FluentSettings"
+	SaveManager.Ignore = {}
+	SaveManager.Parser = {
+		Toggle = {
+			Save = function(idx, object) 
+				return { type = "Toggle", idx = idx, value = object.Value } 
+			end,
+			Load = function(idx, data)
+				if SaveManager.Options[idx] then 
+					SaveManager.Options[idx]:SetValue(data.value)
+				end
+			end,
+		},
+		Slider = {
+			Save = function(idx, object)
+				return { type = "Slider", idx = idx, value = tostring(object.Value) }
+			end,
+			Load = function(idx, data)
+				if SaveManager.Options[idx] then 
+					SaveManager.Options[idx]:SetValue(data.value)
+				end
+			end,
+		},
+		Dropdown = {
+			Save = function(idx, object)
+				return { type = "Dropdown", idx = idx, value = object.Value, mutli = object.Multi }
+			end,
+			Load = function(idx, data)
+				if SaveManager.Options[idx] then 
+					SaveManager.Options[idx]:SetValue(data.value)
+				end
+			end,
+		},
+		Colorpicker = {
+			Save = function(idx, object)
+				return { type = "Colorpicker", idx = idx, value = object.Value:ToHex(), transparency = object.Transparency }
+			end,
+			Load = function(idx, data)
+				if SaveManager.Options[idx] then 
+					SaveManager.Options[idx]:SetValueRGB(Color3.fromHex(data.value), data.transparency)
+				end
+			end,
+		},
+		Keybind = {
+			Save = function(idx, object)
+				return { type = "Keybind", idx = idx, mode = object.Mode, key = object.Value }
+			end,
+			Load = function(idx, data)
+				if SaveManager.Options[idx] then 
+					SaveManager.Options[idx]:SetValue(data.key, data.mode)
+				end
+			end,
+		},
 
--- ====================================================================
--- 0. KIỂM TRA MAP (SEA CHECK)
--- ====================================================================
-local MAP_SEAS = {
-    [85211729168715] = 1,    -- Sea 1
-    [79091703265657] = 2,    -- Sea 2
-    [100117331123089] = 3    -- Sea 3
-}
+		Input = {
+			Save = function(idx, object)
+				return { type = "Input", idx = idx, text = object.Value }
+			end,
+			Load = function(idx, data)
+				if SaveManager.Options[idx] and type(data.text) == "string" then
+					SaveManager.Options[idx]:SetValue(data.text)
+				end
+			end,
+		},
+	}
 
-local currentSea = MAP_SEAS[game.PlaceId]
-if not currentSea then
-    LocalPlayer:Kick("PlaceId không hợp lệ!")
-    return
-end
+	function SaveManager:SetIgnoreIndexes(list)
+		for _, key in next, list do
+			self.Ignore[key] = true
+		end
+	end
 
-local Sea1 = currentSea == 1
-local Sea2 = currentSea == 2
-local Sea3 = currentSea == 3
+	function SaveManager:SetFolder(folder)
+		self.Folder = folder;
+		self:BuildFolderTree()
+	end
 
--- ====================================================================
--- KHỞI TẠO NHÂN VẬT
--- ====================================================================
-local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+	function SaveManager:Save(name)
+		if (not name) then
+			return false, "no config file is selected"
+		end
 
-LocalPlayer.CharacterAdded:Connect(function(newChar)
-    Character = newChar
-    HumanoidRootPart = newChar:WaitForChild("HumanoidRootPart")
-end)
+		local fullPath = self.Folder .. "/settings/" .. name .. ".json"
 
--- ====================================================================
--- 1. KHỞI TẠO CỬA SỔ UI (FLUENT) & ADDONS
--- ====================================================================
-local Fluent = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mr-PMC/FluentUI/refs/heads/master/main.lua"))()
-local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mr-PMC/FluentUI/refs/heads/master/Addons/SaveManager.lua"))()
-local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/Mr-PMC/FluentUI/refs/heads/master/Addons/InterfaceManager.lua"))()
+		local data = {
+			objects = {}
+		}
 
--- TÊN THƯ MỤC CONFIG CỦA HUB
-SaveManager:SetFolder("FatCatHub")
-InterfaceManager:SetFolder("FatCatHub")
+		for idx, option in next, SaveManager.Options do
+			if not self.Parser[option.Type] then continue end
+			if self.Ignore[idx] then continue end
 
-local Window = Fluent:CreateWindow({
-    Title = "Fat Cat Hub",
-    SubTitle = "v2.5 Full Edition | Sea " .. tostring(currentSea),
-    TabWidth = 160,
-    Size = UDim2.fromOffset(580, 460),
-    Acrylic = true,
-    Theme = "Dark",
-    MinimizeKey = Enum.KeyCode.LeftControl
-})
+			table.insert(data.objects, self.Parser[option.Type].Save(idx, option))
+		end	
 
--- 2. KHỞI TẠO 12 TAB CHÍNH
-local TabDefinitions = {
-    {"Info", "Info", "info"},
-    {"Farm", "Farm", "sword"},
-    {"StackFarming", "Stack Farming", "layers"},
-    {"ItemShop", "Item & Shop", "package"},
-    {"ServerHopFarm", "Server Hop", "server"},
-    {"ESPStats", "ESP & Stats", "eye"},
-    {"FruitRaid", "Fruits & Raid", "apple"},
-    {"TeleportPvP", "Teleport & PvP", "map-pin"},
-    {"Race", "Race V4", "shield"},
-    {"SeaEvent", "Sea Events", "waves"},
-    {"Setting", "Settings", "settings"},
-    {"DiscordWebhook", "Discord Webhook", "message-circle"}
-}
+		local success, encoded = pcall(httpService.JSONEncode, httpService, data)
+		if not success then
+			return false, "failed to encode data"
+		end
 
-local Tabs = {}
-for _, tabData in ipairs(TabDefinitions) do
-    Tabs[tabData[1]] = Window:AddTab({ Title = tabData[2], Icon = tabData[3] })
-end
+		writefile(fullPath, encoded)
+		return true
+	end
 
--- ====================================================================
--- 3. BỘ MẪU CÁC THÀNH PHẦN GIAO DIỆN (FLUENT COMPONENTS)
--- ====================================================================
+	function SaveManager:Load(name)
+		if (not name) then
+			return false, "no config file is selected"
+		end
+		
+		local file = self.Folder .. "/settings/" .. name .. ".json"
+		if not isfile(file) then return false, "invalid file" end
 
--- [1. PARAGRAPH]
-Tabs.Farm:AddParagraph({
-    Title = "Hướng Dẫn Sử Dụng",
-    Content = "Đang hoạt động tại: Sea " .. tostring(currentSea) .. "\nChọn các chức năng bên dưới để bắt đầu Farm."
-})
+		local success, decoded = pcall(httpService.JSONDecode, httpService, readfile(file))
+		if not success then return false, "decode error" end
 
--- [2. TOGGLE]
-Tabs.Farm:AddSection("Cấu Hình Công Tắc")
-local ExampleToggle = Tabs.Farm:AddToggle("ExampleToggle", { 
-    Title = "Tên Công Tắc (Toggle)", 
-    Description = "Mô tả ngắn gọn chức năng ở đây",
-    Default = false 
-})
-ExampleToggle:OnChanged(function(Value)
-    if Value then
-        task.spawn(function()
-            while Fluent.Options.ExampleToggle and Fluent.Options.ExampleToggle.Value do
-                pcall(function()
-                    -- Code chạy ngầm ở đây
-                end)
-                task.wait(0.1)
+		for _, option in next, decoded.objects do
+			if self.Parser[option.type] then
+				task.spawn(function() self.Parser[option.type].Load(option.idx, option) end) -- task.spawn() so the config loading wont get stuck.
+			end
+		end
+
+		return true
+	end
+
+	function SaveManager:IgnoreThemeSettings()
+		self:SetIgnoreIndexes({ 
+			"InterfaceTheme", "AcrylicToggle", "TransparentToggle", "MenuKeybind"
+		})
+	end
+
+	function SaveManager:BuildFolderTree()
+		local paths = {
+			self.Folder,
+			self.Folder .. "/settings"
+		}
+
+		for i = 1, #paths do
+			local str = paths[i]
+			if not isfolder(str) then
+				makefolder(str)
+			end
+		end
+	end
+
+	function SaveManager:RefreshConfigList()
+		local list = listfiles(self.Folder .. "/settings")
+
+		local out = {}
+		for i = 1, #list do
+			local file = list[i]
+			if file:sub(-5) == ".json" then
+				local pos = file:find(".json", 1, true)
+				local start = pos
+
+				local char = file:sub(pos, pos)
+				while char ~= "/" and char ~= "\\" and char ~= "" do
+					pos = pos - 1
+					char = file:sub(pos, pos)
+				end
+
+				if char == "/" or char == "\\" then
+					local name = file:sub(pos + 1, start - 1)
+					if name ~= "options" then
+						table.insert(out, name)
+					end
+				end
+			end
+		end
+		
+		return out
+	end
+
+	function SaveManager:SetLibrary(library)
+		self.Library = library
+        self.Options = library.Options
+	end
+
+	function SaveManager:LoadAutoloadConfig()
+		if isfile(self.Folder .. "/settings/autoload.txt") then
+			local name = readfile(self.Folder .. "/settings/autoload.txt")
+
+			local success, err = self:Load(name)
+			if not success then
+				return self.Library:Notify({
+					Title = "Interface",
+					Content = "Config loader",
+					SubContent = "Failed to load autoload config: " .. err,
+					Duration = 7
+				})
+			end
+
+			self.Library:Notify({
+				Title = "Interface",
+				Content = "Config loader",
+				SubContent = string.format("Auto loaded config %q", name),
+				Duration = 7
+			})
+		end
+	end
+
+	function SaveManager:BuildConfigSection(tab)
+		assert(self.Library, "Must set SaveManager.Library")
+
+		local section = tab:AddSection("Configuration")
+
+		section:AddInput("SaveManager_ConfigName",    { Title = "Config name" })
+		section:AddDropdown("SaveManager_ConfigList", { Title = "Config list", Values = self:RefreshConfigList(), AllowNull = true })
+
+		section:AddButton({
+            Title = "Create config",
+            Callback = function()
+                local name = SaveManager.Options.SaveManager_ConfigName.Value
+
+                if name:gsub(" ", "") == "" then 
+                    return self.Library:Notify({
+						Title = "Interface",
+						Content = "Config loader",
+						SubContent = "Invalid config name (empty)",
+						Duration = 7
+					})
+                end
+
+                local success, err = self:Save(name)
+                if not success then
+                    return self.Library:Notify({
+						Title = "Interface",
+						Content = "Config loader",
+						SubContent = "Failed to save config: " .. err,
+						Duration = 7
+					})
+                end
+
+				self.Library:Notify({
+					Title = "Interface",
+					Content = "Config loader",
+					SubContent = string.format("Created config %q", name),
+					Duration = 7
+				})
+
+                SaveManager.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
+                SaveManager.Options.SaveManager_ConfigList:SetValue(nil)
             end
-        end)
-    end
-end)
-
--- [3. BUTTON]
-Tabs.Farm:AddSection("Cấu Hình Nút Bấm")
-Tabs.Farm:AddButton({
-    Title = "Tên Nút Bấm (Button)",
-    Description = "Bấm vào để kích hoạt hành động 1 lần",
-    Callback = function()
-        -- Logic thực thi ở đây
-    end
-})
-
--- [4. DROPDOWN]
-Tabs.Farm:AddSection("Cấu Hình Menu Chọn")
-local ExampleDropdown = Tabs.Farm:AddDropdown("ExampleDropdown", {
-    Title = "Danh Sách Chọn (Dropdown)",
-    Values = {"Lựa chọn 1", "Lựa chọn 2", "Lựa chọn 3", "Lựa chọn 4", "Lựa chọn 5"},
-    Default = "Lựa chọn 1",
-    Multi = false,
-    Callback = function(Value)
-        -- Logic xử lý khi chọn
-    end
-})
-
--- [5. SLIDER]
-Tabs.Farm:AddSection("Cấu Hình Thanh Trượt")
-local ExampleSlider = Tabs.Farm:AddSlider("ExampleSlider", {
-    Title = "Thanh Trượt Giá Trị (Slider)",
-    Description = "Kéo để thay đổi giá trị số",
-    Default = 300,
-    Min = 100,
-    Max = 500,
-    Rounding = 0,
-    Callback = function(Value)
-        -- Logic xử lý khi kéo slider
-    end
-})
-
--- [6. INPUT]
-Tabs.Farm:AddSection("Cấu Hình Ô Nhập Text")
-local ExampleInput = Tabs.Farm:AddInput("ExampleInput", {
-    Title = "Ô Nhập Liệu (Input)",
-    Default = "",
-    Placeholder = "Nhập văn bản vào đây...",
-    Numeric = false,
-    Finished = true,
-    Callback = function(Value)
-        -- Logic xử lý khi nhập xong
-    end
-})
-
--- [7. COLORPICKER]
-Tabs.Farm:AddSection("Cấu Hình Chọn Màu")
-local ExampleColorpicker = Tabs.Farm:AddColorpicker("ExampleColorpicker", {
-    Title = "Bảng Chọn Màu (Colorpicker)",
-    Default = Color3.fromRGB(255, 255, 255),
-    Callback = function(Value)
-        -- Value kiểu Color3
-    end
-})
-
--- ====================================================================
--- 4. QUẢN LÝ CONFIG TỰ ĐỘNG (AUTO SAVE / AUTO LOAD)
--- ====================================================================
-
-SaveManager:SetLibrary(Fluent)
-InterfaceManager:SetLibrary(Fluent)
-
-SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({})
-
--- TÊN FILE CONFIG CỐ ĐỊNH: BloxFruits_Têntàikhoản.json
-local DEFAULT_CONFIG = "BloxFruits_" .. LocalPlayer.Name
-local autoSaveActive = true
-
--- Chỉnh Theme & Keybind giao diện
-InterfaceManager:BuildInterfaceSection(Tabs.Setting)
-
--- NÚT RESET CONFIG TRONG TAB SETTING
-Tabs.Setting:AddSection("Đặt Lại Cấu Hình")
-
-Tabs.Setting:AddButton({
-    Title = "Reset Config",
-    Description = "Xóa file cấu hình đã lưu. Vui lòng re-execute lại script để về mặc định.",
-    Callback = function()
-        autoSaveActive = false
-        
-        pcall(function()
-            local filePath = "FatCatHub/settings/" .. DEFAULT_CONFIG .. ".json"
-            if isfile and isfile(filePath) then
-                delfile(filePath)
-            end
-        end)
-
-        Fluent:Notify({
-            Title = "Fat Cat Hub",
-            Content = "Đã xóa file Config! Vui lòng re-execute lại Script để áp dụng mặc định.",
-            Duration = 5
         })
-    end
-})
 
--- TỰ ĐỘNG TẢI CONFIG KHI BẮT ĐẦU CHẠY SCRIPT
-pcall(function()
-    SaveManager:Load(DEFAULT_CONFIG)
-end)
+        section:AddButton({Title = "Load config", Callback = function()
+			local name = SaveManager.Options.SaveManager_ConfigList.Value
 
--- TỰ ĐỘNG LƯU CONFIG NGẦM MỖI 2 GIÂY
-task.spawn(function()
-    while task.wait(2) do
-        if autoSaveActive then
-            pcall(function()
-                SaveManager:Save(DEFAULT_CONFIG)
-            end)
-        end
-    end
-end)
+			local success, err = self:Load(name)
+			if not success then
+				return self.Library:Notify({
+					Title = "Interface",
+					Content = "Config loader",
+					SubContent = "Failed to load config: " .. err,
+					Duration = 7
+				})
+			end
 
-Window:SelectTab(1)
+			self.Library:Notify({
+				Title = "Interface",
+				Content = "Config loader",
+				SubContent = string.format("Loaded config %q", name),
+				Duration = 7
+			})
+		end})
 
-Fluent:Notify({
-    Title = "Fat Cat Hub",
-    Content = "Đã tải giao diện và cấu hình: " .. DEFAULT_CONFIG,
-    Duration = 4
-})
+		section:AddButton({Title = "Overwrite config", Callback = function()
+			local name = SaveManager.Options.SaveManager_ConfigList.Value
+
+			local success, err = self:Save(name)
+			if not success then
+				return self.Library:Notify({
+					Title = "Interface",
+					Content = "Config loader",
+					SubContent = "Failed to overwrite config: " .. err,
+					Duration = 7
+				})
+			end
+
+			self.Library:Notify({
+				Title = "Interface",
+				Content = "Config loader",
+				SubContent = string.format("Overwrote config %q", name),
+				Duration = 7
+			})
+		end})
+
+		section:AddButton({Title = "Refresh list", Callback = function()
+			SaveManager.Options.SaveManager_ConfigList:SetValues(self:RefreshConfigList())
+			SaveManager.Options.SaveManager_ConfigList:SetValue(nil)
+		end})
+
+		local AutoloadButton
+		AutoloadButton = section:AddButton({Title = "Set as autoload", Description = "Current autoload config: none", Callback = function()
+			local name = SaveManager.Options.SaveManager_ConfigList.Value
+			writefile(self.Folder .. "/settings/autoload.txt", name)
+			AutoloadButton:SetDesc("Current autoload config: " .. name)
+			self.Library:Notify({
+				Title = "Interface",
+				Content = "Config loader",
+				SubContent = string.format("Set %q to auto load", name),
+				Duration = 7
+			})
+		end})
+
+		if isfile(self.Folder .. "/settings/autoload.txt") then
+			local name = readfile(self.Folder .. "/settings/autoload.txt")
+			AutoloadButton:SetDesc("Current autoload config: " .. name)
+		end
+
+		SaveManager:SetIgnoreIndexes({ "SaveManager_ConfigList", "SaveManager_ConfigName" })
+	end
+end
+
+return SaveManager
