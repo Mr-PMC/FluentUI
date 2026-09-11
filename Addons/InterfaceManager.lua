@@ -102,11 +102,19 @@ local InterfaceManager = {} do
 			end
 		})
 	
-		local MenuKeybind = section:AddKeybind("MenuKeybind", { Title = "Minimize Bind", Default = Settings.MenuKeybind })
-		MenuKeybind:OnChanged(function()
-			Settings.MenuKeybind = MenuKeybind.Value
-            InterfaceManager:SaveSettings()
-		end)
+		local MenuKeybind = section:AddKeybind("MenuKeybind", {
+		    Title = "Minimize Bind",
+		    Default = Settings.MenuKeybind,
+		    ChangedCallback = function(Value)
+		        if typeof(Value) == "EnumItem" then
+		            Settings.MenuKeybind = Value.Name
+		        elseif type(Value) == "string" then
+		            Settings.MenuKeybind = Value
+		        end
+		        InterfaceManager:SaveSettings()
+		    end
+		})
+		
 		Library.MinimizeKeybind = MenuKeybind
     end
 end
